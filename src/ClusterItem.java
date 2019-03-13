@@ -4,7 +4,7 @@ public class ClusterItem implements Comparable<ClusterItem> {
     private String url;
     private int nos;
     private String sh;
-    private int similarityScore;
+    private double similarityScore;
 
     public ClusterItem() {
     }
@@ -41,19 +41,19 @@ public class ClusterItem implements Comparable<ClusterItem> {
         this.sh = sh;
     }
 
-    public int getSimilarityScore() {
+    public double getSimilarityScore() {
         return similarityScore;
     }
 
-    public void setSimilarityScore(int similarityScore) {
+    public void setSimilarityScore(double similarityScore) {
         this.similarityScore = similarityScore;
     }
 
     @Override
     public int compareTo(ClusterItem o) {
-        if(this.getSimilarityScore() > o.getSimilarityScore()) {
+        if (this.getSimilarityScore() > o.getSimilarityScore()) {
             return 1;
-        } else if(this.getSimilarityScore() == o.getSimilarityScore()) {
+        } else if (this.getSimilarityScore() == o.getSimilarityScore()) {
             return 0;
         } else {
             return -1;

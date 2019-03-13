@@ -34,7 +34,6 @@ public class SpiralClusterBuilder {
 
             //creating a DataInput stream class where it reads the file and outputs bytes stream
             DataInputStream dis = null;
-
             String text = null;
             String kshingle = null;
             Text cluster = null;
