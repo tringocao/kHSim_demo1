@@ -1,7 +1,0 @@
-/data/input/d1.txt
-/data/input/d2.txt
-/data/input/d3.txt
-/data/input/d4.txt
-/data/input/d5.txt
-/data/input/d6.txt
-/data/input/d7.txt

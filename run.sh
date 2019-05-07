@@ -1,20 +1,31 @@
 #!/bin/bash
+path=$PWD
+hadoopvar=/home/minhquang/hadoop/bin/hadoop
+#$1 = times 
+
+# Remove exist file in hdfs
+#hdfs dfs -rm /data/input/*
+hdfs dfs -rm /data/input2/*
+hdfs dfs -rm /data/src/*
+
 # Put from local to hdfs
-hdfs dfs -put /home/minhquang/Documents/hadoop_demo1_2/input/*  /data/input
-hdfs dfs -put /home/minhquang/Documents/hadoop_demo1_2/src/path.txt  /data/src
-# Compile java file
-cd /home/minhquang/Documents/hadoop_demo1_2/src
-/home/minhquang/hadoop/bin/hadoop com.sun.tools.javac.Main kHSimHelper.java SpiralClusterBuilder.java ClusterItem.java
-# Make jar file and run
-jar cf SCB.jar SpiralClusterBuilder*.class kHSimHelper.class ClusterItem.class
-/home/minhquang/hadoop/bin/hadoop jar SCB.jar SpiralClusterBuilder /data/src/path.txt /output$1
-# Show output
-hdfs dfs -cat /output$1/part*
+hdfs dfs -put $path/input/*  /data/input
+hdfs dfs -put $path/src/query.txt  /data/src
+
+# Run
+cd $path/src
+$hadoopvar jar SCB.jar SpiralClusterBuilder /data/input/ /output0$1
+
 # Copy from HSDF to local
-rm /home/minhquang/Documents/hadoop_demo1_2/res/result
-hdfs dfs -get /output$1/part* /home/minhquang/Documents/hadoop_demo1_2/res/result
-# Compile and run 3rd-party process
-javac MiddleProcess.java
-java MiddleProcess
-# Put MidProcessRes to HDFS
-hdfs dfs -put /home/minhquang/Documents/hadoop_demo1_2/res/midProcessRes  /data/input
+rm $path/res/*
+hdfs dfs -get /output0$1/part* $path/res
+
+# Copy output MR-1 to input2
+hdfs dfs -cp /output0$1/part* /data/input2
+
+# Run MR-2
+$hadoopvar jar MR2.jar MapReduceJob2 /data/input2 /output-MR2-0$1 /data/src/query.txt
+
+# Copy from HSDF to local
+hdfs dfs -get /output-MR2-0$1/part* $path/res/FINAL.txt
+

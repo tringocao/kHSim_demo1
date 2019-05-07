@@ -6,3 +6,4 @@ mr-jobhistory-daemon.sh --config /home/minhquang/hadoop/etc/hadoop/ start histor
 hdfs dfs -mkdir /data
 hdfs dfs -mkdir /data/input
 hdfs dfs -mkdir /data/src
+hdfs dfs -mkdir /data/input2

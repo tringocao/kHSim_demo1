@@ -9,6 +9,11 @@ public class ClusterItem implements Comparable<ClusterItem> {
     public ClusterItem() {
     }
 
+    public ClusterItem(String url, double similarityScore) {
+        this.url = url;
+        this.similarityScore = similarityScore;
+    }
+
     public int getClusterId() {
         return clusterId;
     }
@@ -58,6 +63,10 @@ public class ClusterItem implements Comparable<ClusterItem> {
         } else {
             return -1;
         }
+    }
+    @Override
+    public String toString() {
+        return "[ URL= " + url + ", similarityScore=" + similarityScore + "]";
     }
 
 }

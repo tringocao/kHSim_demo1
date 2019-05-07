@@ -13,6 +13,7 @@ import java.util.HashMap;
 import java.util.Random;
 import java.util.Scanner;
 
+
 /**
  *
  * @author minhquang
@@ -20,11 +21,11 @@ import java.util.Scanner;
 public class kHSimHelper {
 
     public static int LAMDA = 2;
-    public static int K = 2;
-    public static int THRESHOLD = 10;
-    public static double DEFAULT_EPSILON = 0.6;
-    public static String PATH = "/home/minhquang/Documents/hadoop_demo1_2/";
-    private static final String STOP_SYMBOLS[] = {".", ",", "!", "?", ":", ";", "-", "\\", "/", "*", "(", ")"};
+    public static int K = 10;
+    public static double THRESHOLD = 0.0D;
+    public static double DEFAULT_EPSILON = 0.3D;
+    
+//    private static final String STOP_SYMBOLS[] = {".", ",", "!", "?", ":", ";", "-", "\\", "/", "*", "(", ")"};
 
     //  Find correct cluster with provided length
     public static int findCluster(int nOS) {
@@ -71,16 +72,17 @@ public class kHSimHelper {
     }
 
     //  Remove unnecessary word
-    private static String canonize(String str) {
-        for (String stopSymbol : STOP_SYMBOLS) {
-            str = str.replace(stopSymbol, "");
-        }
-        return str.trim();
-    }
+//    private static String canonize(String str) {
+//        for (String stopSymbol : STOP_SYMBOLS) {
+//            str = str.replace(stopSymbol, "");
+//        }
+//        return str.trim();
+//    }
 
     //  Generate shingle, output: shingle number + hashcode
     public static String genShingle(String strNew) {
-        String str = canonize(strNew.toLowerCase());
+//        String str = canonize(strNew.toLowerCase());
+        String str = strNew.toLowerCase();
         String words[] = str.split(" ");
         int shinglesNumber = words.length - LAMDA + 1;
         String shingles = "";
@@ -96,17 +98,18 @@ public class kHSimHelper {
 
             shingles = shingles + shingle.hashCode() + ";";
         }
-
+	if (shinglesNumber==0) shingles = words.hashCode() + ";";
         return shinglesNumber + "@" + shingles;
     }
 
     //  Calculate Similarity Score
+    //  text1 luon la query. Do query unique nen khi tim thay shingle trung no se break
     public static double calculateSim(String text1, String text2) {
         //  Catch null
         if (text1.trim().isEmpty() || text2.trim().isEmpty() || text1 == null || text2 == null) {
             return 0;
         }
-
+//	System.out.println(text1 +" "+text2);
         String[] shingle1 = text1.split(";");
         String[] shingle2 = text2.split(";");
         double similarShinglesNumber = 0D;
@@ -115,13 +118,15 @@ public class kHSimHelper {
             for (int j = 0; j < shingle2.length; j++) {
                 if (shingle1[i].equalsIgnoreCase(shingle2[j])) {
                     similarShinglesNumber++;
+                    break;
                 }
             }
         }
+
+//	System.out.println("similarShinglesNumber: "+ similarShinglesNumber +" shingle1.length: "+shingle1.length+" shingle1.length: "+shingle2.length );
         return ((similarShinglesNumber / (shingle1.length + shingle2.length - similarShinglesNumber)));
     }
-    
-    
+
     public static ClusterItem[] readFileFromLocal(String path) {
         ArrayList<ClusterItem> res = new ArrayList<>();
         try {
@@ -178,8 +183,8 @@ public class kHSimHelper {
             item.setClusterId(clusterId);
             item.setUrl(res3[0]);
             item.setNos(Integer.parseInt(res3[1]));
-            item.setSh(res3[2]);
-
+	    //if(res3.length < 3) item.setSh("");
+	    item.setSh(res3[2]);            
             result.add(item);
         }
         return result;
@@ -213,8 +218,8 @@ public class kHSimHelper {
         return res.toArray(new ClusterItem[res.size()]);
     }
 
-    public static void writeToFile(String folder, String query, double epsilon1, String listOfCluster, double epsilon2) {        
-        writeToFile(PATH + folder, query + "\n" + epsilon1 + "\n" + listOfCluster + "\n" + epsilon2 + "\n" + listOfCluster);
+    public static void writeToFile(String path, String query, double epsilon1, String listOfCluster1, double epsilon2, String listOfCluster2) {
+        writeToFile(path, query + "\n" + epsilon1 + "\n" + listOfCluster1 + "\n" + epsilon2 + "\n" + listOfCluster2);
     }
 
     public static void writeToFile(String path, String fileContent) {
@@ -223,14 +228,31 @@ public class kHSimHelper {
         } catch (Exception e) {
         }
     }
-    
+
     public static ArrayList<ClusterItem> getAllItemsFromCluster(HashMap<Integer, ArrayList<ClusterItem>> hashmap, int[] clusterList) {
         ArrayList<ClusterItem> res = new ArrayList<>();
-        
-        for(int i : clusterList) {
+
+        for (int i : clusterList) {
             res.addAll(hashmap.get(i));
         }
-        
+
+        return res;
+    }
+
+    public static String uniqueQuery(String s) {
+        String[] it = s.split(";");
+        String res = "";
+        for (int i = 0; i < it.length; i++) {
+            int j;
+            for (j = 0; j <= i; j++) {
+                if (it[i].equalsIgnoreCase(it[j])) {
+                    break;
+                }
+            }
+            if (i == j) {
+                res = res + it[i] + ";";
+            }
+        }
         return res;
     }
 }
