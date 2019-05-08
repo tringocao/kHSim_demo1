@@ -111,15 +111,14 @@ public class MapReduceJob2 {
             FileSplit fileSplit = (FileSplit) context.getInputSplit();
             String filename = fileSplit.getPath().toString();
             //  Get item list
-            ArrayList<ClusterItem> itemList = kHSimHelper.readCluster(content);
-
-            int clusterId = itemList.get(0).getClusterId();
-
+            String[] res = context.split("	");
+            int clusterId = (int) Double.parseDouble(res[0]);
             //  Check if clusterId suitable
             boolean isRightCluster = ((double) clusterId > LB) && ((double) clusterId < UB);
             boolean isEnoughItem = itemList.size() >= kHSimHelper.K;
 
             if (isRightCluster) {
+                ArrayList<ClusterItem> itemList = kHSimHelper.readCluster(content);
                 context.getCounter(CountersEnum.class.getName(), CountersEnum.NUM_OF_CLUSTER_READ.toString()).increment(1);
 
                 ClusterItem[] chosenItems;
