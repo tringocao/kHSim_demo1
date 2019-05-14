@@ -39,9 +39,13 @@ import java.io.InputStreamReader;
 import org.apache.hadoop.util.StringUtils;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Map.Entry;
+import org.apache.hadoop.io.LongWritable;
 import org.apache.hadoop.mapreduce.InputSplit;
 import org.apache.hadoop.mapreduce.MRJobConfig;
+import org.apache.hadoop.mapreduce.Partitioner;
 import org.apache.hadoop.mapreduce.lib.input.FileSplit;
+import org.apache.hadoop.mapreduce.lib.input.KeyValueTextInputFormat;
 
 /**
  *
@@ -49,55 +53,144 @@ import org.apache.hadoop.mapreduce.lib.input.FileSplit;
  */
 public class MapReduceJob2 {
 
-    public static class MapReduceJob2Mapper extends Mapper<Object, Text, Text, Text> {
+    public static class MapReduceJob2Mapper extends Mapper<LongWritable, Text, Text, Text> {
 
         static enum CountersEnum {
-            NUM_OF_CLUSTER_READ
+            NUM_OF_CLUSTER_READ,
+            NUM_OF_SIM_CALCULATED,
+            NUM_OF_ITEM_READ
         }
 
         private Configuration conf;
         private BufferedReader fis;
-        private Set<String> queryRead = new HashSet<String>();
+        private Set<String> contentRead = new HashSet<String>();
+        public static HashMap<String, ArrayList<ClusterItem>> TOP_K_MAP = new HashMap<String, ArrayList<ClusterItem>>();
+        public static HashMap<String, Double> EPSILON_MAP = new HashMap<>();
 
-        private String QUERY = "";
+        public static ArrayList<ClusterItem> TOP_K = new ArrayList<>();
+        public static double EPSILON = 0.0D;
+        public static boolean IS_INCREMENT = false;
+        public static boolean IS_MULTIPLE_QUERY = false;
+        public static String QUERY = "";
+        public static ArrayList<String> QUERY_LIST = new ArrayList<>();
         private double LB;
         private double UB;
         private String queryShingle;
+        public static ArrayList<String> QUERY_SHINGLE_LIST;
         private int queryShingleLength;
 
         @Override
         public void setup(Context context) throws IOException, InterruptedException {
             conf = context.getConfiguration();
-            URI[] queryURIs = Job.getInstance(conf).getCacheFiles();
-            for (URI queryURI : queryURIs) {
-                Path queryPath = new Path(queryURI.getPath());
-                String queryFileName = queryPath.getName();
-                parseQuery(queryFileName);
+            URI[] filesURIs = Job.getInstance(conf).getCacheFiles();
+            System.out.println("SIZE = \t" + filesURIs.length);
+            for (URI fileURI : filesURIs) {
+                Path path = new Path(fileURI.getPath());
+                String fileName = path.getName();
+                System.out.println("READING\t" + fileName);
+                parseFiles(fileName);
             }
 
-            for (String i : queryRead) {
-                QUERY = i;
-                break;
+            IS_MULTIPLE_QUERY = TOP_K_MAP.size() > 1;
+
+            //  TOP_K_MAP co size > 1: multi-query
+            if (IS_MULTIPLE_QUERY) {
+                //  Vua multi-query, vua increment
+                if (IS_INCREMENT) {
+                    Set<Entry<String, ArrayList<ClusterItem>>> entrySet = TOP_K_MAP.entrySet();
+                    ArrayList<Entry<String, ArrayList<ClusterItem>>> listOfEntry = new ArrayList<Entry<String, ArrayList<ClusterItem>>>(entrySet);
+                    for (Entry<String, ArrayList<ClusterItem>> entry : listOfEntry) {
+                        ArrayList<ClusterItem> currentTopK = entry.getValue();
+                        Collections.sort(currentTopK);
+
+                        EPSILON_MAP.put(entry.getKey(), currentTopK.get(0).getSimilarityScore());
+                    }
+                } //  Chi multi-query
+                else {
+                    EPSILON = kHSimHelper.DEFAULT_EPSILON;
+
+                    //  Gen list query shingle
+                    QUERY_SHINGLE_LIST = new ArrayList<>();
+                    for (String s : QUERY_LIST) {
+                        String shingle = kHSimHelper.uniqueQuery(kHSimHelper.genShingle(s).split("@")[1]);
+                        QUERY_SHINGLE_LIST.add(shingle);
+
+                        String kQueryShingle[] = shingle.split(";");
+
+                        //  Tim min LB va max UB
+                        double lb = kHSimHelper.findLB(kQueryShingle.length, EPSILON);
+                        if (lb < LB) {
+                            LB = lb;
+                        }
+
+                        double ub = kHSimHelper.findUB(kQueryShingle.length, EPSILON);
+                        if (ub > UB) {
+                            UB = ub;
+                        }
+                    }
+                }
+                //  TOP_K_MAP co size == 1: 1 query 
+            } else {
+                //  1 query, increment
+                if (IS_INCREMENT) {
+                    TOP_K = new ArrayList<ClusterItem>();
+                    TOP_K = TOP_K_MAP.get(QUERY);
+
+                    Collections.sort(TOP_K);
+
+                    EPSILON = TOP_K.get(0).getSimilarityScore();
+                } //  1 query, khong increment (Truong hop binh thuong)
+                else {
+                    System.out.println("1 QUERY, NO INCREMENT\t" + QUERY);
+                    QUERY = QUERY.trim();
+
+                    EPSILON = kHSimHelper.DEFAULT_EPSILON;
+
+                }
+
+                //  Gen shingle query
+                queryShingle = kHSimHelper.uniqueQuery(kHSimHelper.genShingle(QUERY).split("@")[1]);
+
+                // Find cluster for query
+                String kQueryShingle[] = queryShingle.split(";");
+                queryShingleLength = kQueryShingle.length;
+
+                LB = kHSimHelper.findLB(queryShingleLength, EPSILON);
+                UB = kHSimHelper.findUB(queryShingleLength, EPSILON);
+
             }
-            QUERY = QUERY.trim();
 
-            //  Gen shingle query
-            queryShingle = kHSimHelper.uniqueQuery(kHSimHelper.genShingle(QUERY).split("@")[1]);
-
-            // Find cluster for query
-            String kQueryShingle[] = queryShingle.split(";");
-            queryShingleLength = kQueryShingle.length;
-
-            LB = kHSimHelper.findLB(queryShingleLength, kHSimHelper.DEFAULT_EPSILON);
-            UB = kHSimHelper.findUB(queryShingleLength, kHSimHelper.DEFAULT_EPSILON);
         }
 
-        private void parseQuery(String fileName) {
+        private void parseFiles(String fileName) {
             try {
                 fis = new BufferedReader(new FileReader(fileName));
-                String query = null;
-                while ((query = fis.readLine()) != null) {
-                    queryRead.add(query);
+                String line = null;
+                String currentQuery = "";
+                while ((line = fis.readLine()) != null) {
+                    System.out.println("LINE =\t" + line);
+
+                    String[] res = line.split("\t");
+
+                    if (res.length > 1) {
+                        IS_INCREMENT = true;
+                        System.out.println("FOUND CLUSTER ITEM");
+                        ClusterItem item = new ClusterItem(res[0], Double.parseDouble(res[1]));
+
+                        ArrayList<ClusterItem> nList = TOP_K_MAP.get(currentQuery);
+                        nList.add(item);
+
+                        TOP_K_MAP.put(currentQuery, nList);
+                    } else {
+                        currentQuery = line.trim();
+                        System.out.println("FOUND QUERY\t" + currentQuery);
+
+                        TOP_K_MAP.put(currentQuery, new ArrayList<ClusterItem>());
+
+                        QUERY = currentQuery;
+                        QUERY_LIST.add(currentQuery);
+                    }
+
                 }
             } catch (IOException ioe) {
                 System.err.println("Caught exception while parsing the cached file '"
@@ -106,163 +199,141 @@ public class MapReduceJob2 {
         }
 
         @Override
-        public void map(Object key, Text value, Context context) throws IOException, InterruptedException {
+        public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
             String content = value.toString();
-            FileSplit fileSplit = (FileSplit) context.getInputSplit();
-            String filename = fileSplit.getPath().toString();
             //  Get item list
-            ArrayList<ClusterItem> itemList = kHSimHelper.readCluster(content);
+            int clusterId = (int) key.get();
 
-            int clusterId = itemList.get(0).getClusterId();
+            if (IS_INCREMENT && IS_MULTIPLE_QUERY) {
+                MapReduceJob2Helper.processMultiQueryIncrement(context, content, EPSILON_MAP, queryShingle, queryShingleLength, EPSILON, clusterId);
+            } else {
+                //  Check if clusterId suitable
+                boolean isRightCluster = ((double) clusterId >= LB) && ((double) clusterId <= UB);
 
-            //  Check if clusterId suitable
-            boolean isRightCluster = ((double) clusterId > LB) && ((double) clusterId < UB);
-            boolean isEnoughItem = itemList.size() >= kHSimHelper.K;
+                if (isRightCluster) {
 
-            if (isRightCluster) {
-                context.getCounter(CountersEnum.class.getName(), CountersEnum.NUM_OF_CLUSTER_READ.toString()).increment(1);
+                    ArrayList<ClusterItem> itemList = kHSimHelper.readCluster(content, clusterId);
 
-                ClusterItem[] chosenItems;
-                boolean isSatisfy = false;
-                int stepCount = itemList.size() + 1;
-                ClusterItem largestItem = new ClusterItem();
-                ClusterItem smallestItem = new ClusterItem();
+                    context.getCounter(CountersEnum.class.getName(), CountersEnum.NUM_OF_CLUSTER_READ.toString()).increment(1);
+                    context.getCounter(CountersEnum.class.getName(), CountersEnum.NUM_OF_ITEM_READ.toString()).increment(itemList.size());
 
-                while (isSatisfy == false && stepCount >= 0) {
-                    if (isEnoughItem) {
-                        chosenItems = kHSimHelper.getKRandomItem(itemList, kHSimHelper.K);
+                    if (IS_INCREMENT) {
+                        MapReduceJob2Helper.processIncrement(context, itemList, queryShingle, EPSILON);
+                    } else if (IS_MULTIPLE_QUERY) {
+                        ArrayList queryList = kHSimHelper.uniqueQueryList(QUERY_LIST);
+                        MapReduceJob2Helper.processMultipleQuery(context, itemList, queryList, queryShingle, queryShingleLength, EPSILON, clusterId);
                     } else {
-                        chosenItems = itemList.toArray(new ClusterItem[itemList.size()]);
-                    }
-
-                    ArrayList<ClusterItem> calculatedItems = new ArrayList<>();
-                    for (ClusterItem item : chosenItems) {
-                        double similarityScore = kHSimHelper.calculateSim(queryShingle, item.getSh());
-                        ClusterItem calItem = item;
-                        calItem.setSimilarityScore(similarityScore);
-                        calculatedItems.add(calItem);
-                    }
-
-                    // Sorting their similary and get the largest one as epsilon
-                    Collections.sort(calculatedItems);
-                    largestItem = calculatedItems.get(calculatedItems.size() - 1);
-                    smallestItem = calculatedItems.get(0);
-
-                    if (largestItem != null && largestItem.getSimilarityScore() >= kHSimHelper.THRESHOLD) {
-                        isSatisfy = true;
-                    }
-                    stepCount--;
-                }
-
-                // Using epsilon to find threshold in chosen cluster, then pass to a file for MR-2
-                // to calculate similarity for all object within these threshold
-                double epsilon1 = largestItem.getSimilarityScore();
-                double epsilon2 = smallestItem.getSimilarityScore();
-
-                // Find cluster for query with new max epsilon 
-                double maxLB = kHSimHelper.findLB(queryShingleLength, epsilon1);
-                double maxUB = kHSimHelper.findUB(queryShingleLength, epsilon1);
-
-                boolean isRightClusterMax = ((double) clusterId > maxLB) && ((double) clusterId < maxUB);
-
-                // Find cluster for query with new min epsilon 
-                double minLB = kHSimHelper.findLB(queryShingleLength, epsilon2);
-                double minUB = kHSimHelper.findUB(queryShingleLength, epsilon2);
-
-                boolean isRightClusterMin = false;
-                if (epsilon1 > epsilon2) {
-                    isRightClusterMin = ((double) clusterId > minLB) && ((double) clusterId < minUB);
-                }
-
-                //  Calculate all sim
-                ArrayList<ClusterItem> topKMax = new ArrayList<>();
-                ArrayList<ClusterItem> topKMin = new ArrayList<>();
-
-                if (isRightClusterMax) {
-                    for (ClusterItem item : itemList) {
-                        double similarityScore = kHSimHelper.calculateSim(queryShingle, item.getSh());
-                        item.setSimilarityScore(similarityScore);
-                        if (similarityScore >= epsilon1) {
-                            topKMax.add(item);
-                        } else if (similarityScore >= epsilon2) {
-                            topKMin.add(item);
-                        }
-                    }
-                } else if (isRightClusterMin) {
-                    for (ClusterItem item : itemList) {
-                        double similarityScore = kHSimHelper.calculateSim(queryShingle, item.getSh());
-                        item.setSimilarityScore(similarityScore);
-                        if (similarityScore >= epsilon2) {
-                            topKMin.add(item);
-                        }
-                    }
-                }
-
-                if (topKMax.size() >= kHSimHelper.K) {
-                    Collections.sort(topKMax);
-                    int size = topKMax.size() - 1;
-                    for (int i = 0; i < kHSimHelper.K; i++) {
-                        context.write(new Text(topKMax.get(size - i).getUrl()),
-                                new Text(String.valueOf(topKMax.get(size - i).getSimilarityScore())));
-                    }
-                } else {
-                    int remain = kHSimHelper.K - topKMax.size();
-                    int size = topKMin.size() - 1;
-                    if (size >= 0) {
-                        Collections.sort(topKMin);
-                        int count = remain;
-                        if (remain > (size + 1)) {
-                            count = size + 1;
-                        }
-                        for (int i = 0; i < count; i++) {
-                            topKMax.add(topKMin.get(size - i));
-                        }
-
-                        for (ClusterItem item : topKMax) {
-                            context.write(new Text(item.getUrl()),
-                                    new Text(String.valueOf(item.getSimilarityScore())));
-                        }
+                        MapReduceJob2Helper.processOneQuery(context, itemList, queryShingle, queryShingleLength, EPSILON, clusterId, "");
                     }
                 }
             }
         }
-
     }
 
     public static class MapReduceJob2Reduce extends Reducer<Text, Text, Text, Text> {
+
         ArrayList<ClusterItem> list = new ArrayList<>();
+        HashMap<String, ArrayList<ClusterItem>> hashmap = new HashMap<String, ArrayList<ClusterItem>>();
 
         @Override
         public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
             double maxScore = 0.0D;
-            for (Text similarityScore : values) {               
-                double sim = Double.parseDouble(similarityScore.toString());                
+            for (Text similarityScore : values) {
+                double sim = Double.parseDouble(similarityScore.toString());
                 if (sim > maxScore) {
                     maxScore = sim;
                 }
-            }            
-            list.add(new ClusterItem(key.toString(), maxScore));
-//            context.write(key, new Text(String.valueOf(maxScore)));
+            }
+            if (MapReduceJob2Mapper.IS_MULTIPLE_QUERY) {
+                String[] s = key.toString().split(",", 2);
+                String url = s[0];
+                String query = s[1];
+
+                if (hashmap.get(query) == null || hashmap.get(query).isEmpty()) {
+                    ArrayList<ClusterItem> nList = new ArrayList<ClusterItem>();
+                    nList.add(new ClusterItem(url, query, maxScore));
+                    hashmap.put(query, nList);
+                } else {
+                    ArrayList<ClusterItem> nList = hashmap.get(query);
+                    nList.add(new ClusterItem(url, query, maxScore));
+                    hashmap.put(query, nList);
+                }
+            } else {
+                list.add(new ClusterItem(key.toString(), MapReduceJob2Mapper.QUERY, maxScore));
+            }
+
         }
-        
+
         protected void cleanup(Context context) throws IOException, InterruptedException {
-            Collections.sort(list);
-            int size = list.size() - 1;
-            for(int i = 0; i < kHSimHelper.K; i++){
-                ClusterItem item = list.get(size - i);
-                context.write(new Text(item.getUrl()), new Text(String.valueOf(item.getSimilarityScore())));
+            if (MapReduceJob2Mapper.IS_MULTIPLE_QUERY) {
+                //  Vua multi-query vua increment
+                if (MapReduceJob2Mapper.IS_INCREMENT) {
+                    Set<Entry<String, ArrayList<ClusterItem>>> entrySet = hashmap.entrySet();
+                    ArrayList<Entry<String, ArrayList<ClusterItem>>> listOfEntry = new ArrayList<Entry<String, ArrayList<ClusterItem>>>(entrySet);
+                    for (Entry<String, ArrayList<ClusterItem>> entry : listOfEntry) {
+                        ArrayList<ClusterItem> nList = entry.getValue();
+                        ArrayList<ClusterItem> topK = MapReduceJob2Mapper.TOP_K_MAP.get(entry.getKey());
+
+                        System.out.println("FINDING TOP-K FOR QUERY = \t" + entry.getKey());
+                        System.out.println("nList size = \t" + nList.size());
+
+                        MapReduceJob2Helper.findTopKIncrement(context, nList, topK);
+                    }
+                } //  Chi co multi-query
+                else {
+                    Set<Entry<String, ArrayList<ClusterItem>>> entrySet = hashmap.entrySet();
+                    ArrayList<Entry<String, ArrayList<ClusterItem>>> listOfEntry = new ArrayList<Entry<String, ArrayList<ClusterItem>>>(entrySet);
+                    for (Entry<String, ArrayList<ClusterItem>> entry : listOfEntry) {
+                        ArrayList<ClusterItem> nList = entry.getValue();
+
+                        MapReduceJob2Helper.findTopKQuery(context, nList);
+                    }
+                }
+            } //  1 Query, increment
+            else if (MapReduceJob2Mapper.IS_INCREMENT) {
+                MapReduceJob2Helper.findTopKIncrement(context, list, MapReduceJob2Mapper.TOP_K);
+            } // 1 query 
+            else {
+                MapReduceJob2Helper.findTopKQuery(context, list);
             }
         }
     }
+    //***
+    public static class CaderPartitioner extends Partitioner<Text, Text> {
 
+        @Override
+        public int getPartition(Text key, Text value, int numReduceTasks) {
+            String[] s = key.toString().split(",");
+            String url = s[0];
+            String query = s[1];
+            int numReduceTask = -1;
+            for (String q : MapReduceJob2Mapper.QUERY_LIST) {
+                if (query.equals(q)) {
+                    return numReduceTask++;
+                }
+            }
+            return 0;
+        }
+    }
     public static void main(String[] args) throws Exception {
-        // Now go to MR2 with max epsilon
+        // MapReduce Job 2: Find Top-K
+        long startTime = System.currentTimeMillis();
         Configuration conf = new Configuration();
+        conf.set("mapreduce.input.keyvaluelinerecordreader.key.value.separator", "\t");
         Job job = Job.getInstance(conf, "MapReduceJob2");
+        job.setInputFormatClass(KeyValueTextInputFormat.class);
         job.addCacheFile(new Path(args[2]).toUri());
         job.setJarByClass(MapReduceJob2.class);
         job.setMapperClass(MapReduceJob2Mapper.class);
-        job.setCombinerClass(MapReduceJob2Reduce.class);
+//        job.setCombinerClass(MapReduceJob2Reduce.class);
+        
+        job.setPartitionerClass(CaderPartitioner.class);
+        //4 la so cau query trong query.txtf  nếu đc thì đem việc đọc câu query ra ngoài ***
+        //ham main vi nếu file input lớn, sẽ tạo ra nhìu mapper -> đoc nhìu lần setup -> đọc nhiu lần file query.txt,
+        // cho phép tao nhìu num task, nếu dư thì bỏ qua.
+        job.setNumReduceTasks(5);
+        
+        
         job.setReducerClass(MapReduceJob2Reduce.class);
         job.setOutputKeyClass(Text.class);
         job.setOutputValueClass(Text.class);
@@ -271,7 +342,7 @@ public class MapReduceJob2 {
         FileInputFormat.addInputPath(job, new Path(args[0]));
         FileOutputFormat.setOutputPath(job, new Path(args[1]));
         job.waitForCompletion(true);
-
+        System.out.println("RUN TIME = " + (System.currentTimeMillis() - startTime));
     }
 
 }
